@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Yap App – Chat</title>
+  <style>
+    body { margin:0; font-family:sans-serif; display:flex; height:100vh; }
+    #sidebar { width:250px; border-right:1px solid #ddd; overflow:auto; }
+    #sidebar button { width:100%; padding:10px; border:none; background:#4285F4; color:#fff; cursor:pointer; }
+    #sidebar button:hover { background:#357AE8; }
+    #sidebar ul { list-style:none; margin:0; padding:0; }
+    #sidebar li { padding:10px; cursor:pointer; border-bottom:1px solid #eee; }
+    #sidebar li.active { background:#f0f0f0; }
+    #main { flex:1; display:flex; flex-direction:column; }
+    #messages { flex:1; padding:10px; overflow:auto; list-style:none; }
+    #messageForm { display:flex; padding:10px; border-top:1px solid #ddd; }
+    #messageForm input { flex:1; padding:8px; margin-right:5px; }
+    #messageForm button { padding:8px 12px; }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <button id="newChatBtn">+ New Chat</button>
+    <ul id="chatList"></ul>
+  </div>
+
+  <div id="main">
+    <ul id="messages"></ul>
+    <form id="messageForm">
+      <input id="messageInput" placeholder="Type a message…" autocomplete="off" required>
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket     = io();
+    const chatList   = document.getElementById('chatList');
+    const newChatBtn = document.getElementById('newChatBtn');
+    const messages   = document.getElementById('messages');
+    const form       = document.getElementById('messageForm');
+    const input      = document.getElementById('messageInput');
+
+    let currentChat = null;   // null = global chat
+    let allUsers    = [];     // loaded from /api/users
+
+    // Load all users for "New Chat"
+    fetch('/api/users')
+      .then(res => res.json())
+      .then(users => allUsers = users)
+      .catch(console.error);
+
+    // Create or fetch a direct chat by email (case-insensitive)
+    newChatBtn.onclick = async () => {
+      const rawEmail = prompt('Enter your friend’s email:');
+      if (!rawEmail) return;
+
+      // Trim and lowercase both sides for comparison
+      const targetEmail = rawEmail.trim().toLowerCase();
+      const friend = allUsers.find(u =>
+        u.email.trim().toLowerCase() === targetEmail
+      );
+
+      if (!friend) {
+        return alert(
+          'No user found with that email.\n' +
+          'Ensure they have logged in at least once and your spelling/casing is correct.'
+        );
+      }
+
+      // Create or fetch the 1-on-1 chat
+      const res = await fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ participantId: friend._id })
+      });
+      const chat = await res.json();
+
+      // Render & select the new chat
+      const li = document.createElement('li');
+      li.textContent = friend.displayName;
+      li.dataset.id = chat._id;
+      li.onclick = () => selectChat(chat._id, li);
+      chatList.appendChild(li);
+      selectChat(chat._id, li);
+    };
+
+    // Initialize chats (Global + existing rooms)
+    function initChats() {
+      // Global Chat entry
+      const globalLi = document.createElement('li');
+      globalLi.textContent = 'Global Chat';
+      globalLi.onclick = () => selectGlobal(globalLi);
+      chatList.appendChild(globalLi);
+
+      // Load private/group chats
+      fetch('/api/chats')
+        .then(res => res.json())
+        .then(chats => {
+          chats.forEach(c => {
+            const li = document.createElement('li');
+            li.textContent = c.name;
+            li.dataset.id = c._id;
+            li.onclick = () => selectChat(c._id, li);
+            chatList.appendChild(li);
+          });
+        })
+        .catch(console.error)
+        .finally(() => {
+          // Default to Global on load
+          selectGlobal(chatList.children[0]);
+        });
+    }
+
+    // Clear any active highlight
+    function clearActive() {
+      [...chatList.children].forEach(li => li.classList.remove('active'));
+    }
+
+    // Select Global Chat
+    function selectGlobal(el) {
+      clearActive();
+      el.classList.add('active');
+      currentChat = null;
+      messages.innerHTML = '';
+      fetch('/api/messages')
+        .then(res => res.json())
+        .then(msgs => msgs.forEach(addMsg))
+        .catch(console.error);
+    }
+
+    // Select a room chat
+    function selectChat(chatId, el) {
+      clearActive();
+      el.classList.add('active');
+      currentChat = chatId;
+      messages.innerHTML = '';
+      fetch(`/api/chats/${chatId}/messages`)
+        .then(res => res.json())
+        .then(msgs => msgs.forEach(addMsg))
+        .catch(console.error);
+      socket.emit('joinChat', chatId);
+    }
+
+    // Receive and render global messages
+    socket.on('newMessage', m => {
+      if (currentChat === null) addMsg(m);
+    });
+    // Receive and render room messages
+    socket.on('message', m => {
+      if (m.chat === currentChat) addMsg(m);
+    });
+
+    // Send a message
+    form.onsubmit = e => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      if (currentChat) {
+        socket.emit('sendMessage', {
+          chatId:   currentChat,
+          username: 'You',
+          text
+        });
+      } else {
+        socket.emit('sendMessage', {
+          username: 'You',
+          message:  text
+        });
+      }
+      input.value = '';
+    };
+
+    // Append a message to the UI
+    function addMsg(m) {
+      const li = document.createElement('li');
+      const t  = new Date(m.timestamp).toLocaleTimeString();
+      li.textContent = `[${t}] ${m.username}: ${m.message}`;
+      messages.appendChild(li);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    // Kick things off
+    initChats();
+  </script>
+</body>
+</html>
