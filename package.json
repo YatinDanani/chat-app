@@ -11,7 +11,8 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "dotenv": "^16.5.0",
+    "connect-mongo": "^5.1.0",
+    "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "express-session": "^1.18.1",
     "mongoose": "^8.16.0",

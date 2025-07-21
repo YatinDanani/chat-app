@@ -9,6 +9,8 @@ const dotenv     = require('dotenv');
 const socketio   = require('socket.io');
 const session    = require('express-session');
 const passport   = require('passport');
+const MongoStore = require('connect-mongo');
+
 require('./auth/passport');
 
 const Chat       = require('./models/chat');
